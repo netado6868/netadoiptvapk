@@ -1,1373 +1,689 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kişiselleştirilmiş IPTV Player</title>
+    
     <!-- PWA MANIFEST Tanımlamaları (PWABuilder için Kritik) -->
     <link rel="manifest" href="/manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="IPTVPlayer">
     <meta name="theme-color" content="#111827"> <!-- Koyu Tema -->
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sarmalamaya Hazır IPTV Player</title>
-    <!-- Tailwind CSS Yüklemesi -->
+
+    <!-- Tailwind CSS (Aesthetics & Responsiveness) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Inter Font Yüklemesi -->
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
-        body { font-family: 'Inter', sans-serif; }
-        /* Özel Kaydırma Çubuğu (Karanlık Tema) */
-        #channelList::-webkit-scrollbar { width: 6px; }
-        #channelList::-webkit-scrollbar-track { background: #1f2937; } /* gray-800 */
-        #channelList::-webkit-scrollbar-thumb { background-color: #4f46e5; border-radius: 3px; } /* indigo-600 */
-    </style>
-    <!-- Kütüphane Yüklemeleri -->
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.8"></script>
+    <!-- Lucide Icons (Kullanıcı arayüzü ikonları) -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <!-- Firebase Modülleri -->
+    <!-- HLS.js (M3U8 akışlarını oynatmak için kritik kütüphane) -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+
+    <!-- Firebase Kütüphaneleri -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Loglama seviyesini Debug olarak ayarla
+        setLogLevel('Debug');
 
-        // Firestore ve Auth nesnelerini global olarak tanımla
-        window.firebase = {
-            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, 
-            getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc, deleteDoc, setLogLevel
+        // Firestore ve Auth Referansları için global değişkenler
+        window.fb = {
+            db: null,
+            auth: null,
+            userId: null,
+            appId: typeof __app_id !== 'undefined' ? __app_id : 'default-iptv-app',
+            isAuthReady: false
         };
-    </script>
-</head>
-<body class="bg-gray-900 text-gray-100 min-h-screen flex flex-col lg:flex-row p-2 sm:p-4 gap-4">
 
-    <!-- Firebase Yükleme Durumu -->
-    <div id="firebaseLoading" class="fixed inset-0 bg-gray-900 bg-opacity-95 z-50 flex items-center justify-center">
-        <div class="text-white text-center p-6 bg-gray-800 rounded-lg shadow-2xl">
-            <svg class="animate-spin h-8 w-8 text-indigo-400 mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p>Uygulama yükleniyor ve veritabanına bağlanılıyor...</p>
-        </div>
-    </div>
-    
-    <!-- Sol Panel: Kanal Listesi / Navigasyon -->
-    <div class="w-full lg:w-80 xl:w-96 bg-gray-800 shadow-2xl rounded-xl p-4 lg:flex-shrink-0 flex flex-col">
-        <!-- LOGO KISMI -->
-        <h3 class="text-2xl font-bold text-indigo-400 mb-4 flex items-center gap-2">
-            <img src="https://placehold.co/40x40/4f46e5/ffffff?text=LOGO" 
-                 onerror="this.onerror=null;this.src='https://placehold.co/40x40/4f46e5/ffffff?text=LOGO';"
-                 alt="Kişisel Logo" class="w-10 h-10 object-contain rounded-lg">
-            
-            <span class="text-white">Player Adı</span> 
-        </h3>
+        // Otomatik olarak canvas ortamından Firebase yapılandırmasını yükler
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
 
-        <!-- Kategori Barı -->
-        <div id="categoryBar" class="flex overflow-x-auto gap-2 pb-3 mb-3 border-b border-gray-700 whitespace-nowrap">
-            <!-- Kategoriler buraya JS ile yüklenecek -->
-        </div>
+        // Uygulama başlatma
+        const app = initializeApp(firebaseConfig);
+        fb.db = getFirestore(app);
+        fb.auth = getAuth(app);
 
-        <!-- Arama ve Sayaç -->
-        <div class="mb-4">
-            <input type="text" id="searchInput" onkeyup="filterChannels()" placeholder="Kanal ara..."
-                   class="w-full p-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm text-white placeholder-gray-400">
-            <p class="text-xs text-gray-400 mt-1">Görüntülenen Kanal: <span id="channelCount">0</span></p>
-        </div>
-
-        <!-- Kanal Listesi (Scrollable) -->
-        <div id="channelList" class="flex-grow space-y-2 overflow-y-auto">
-            <div class="text-center p-6 text-gray-500 text-sm" id="initialMessage">
-                Veritabanından kanal listeniz yükleniyor...
-            </div>
-        </div>
-    </div>
-
-    <!-- Ana İçerik: Video + Xtream Girişi/M3U Yükleme -->
-    <div class="lg:flex-grow w-full space-y-4">
-        <div class="w-full bg-gray-800 shadow-2xl rounded-xl overflow-hidden">
-            <!-- Video Oynatıcı -->
-            <div class="relative w-full aspect-video bg-black">
-                <video id="video" controls class="w-full h-full object-contain"></video>
-            </div>
-            
-            <!-- Mevcut Kanal Bilgisi -->
-            <div id="currentChannelInfo" class="p-4 bg-gray-700 border-t border-gray-600">
-                <h2 class="text-xl font-bold text-indigo-300" id="channelTitle">Kanal Seçilmedi</h2>
-                <p class="text-sm text-gray-400 truncate" id="channelUrl">Oynatmak için listeden bir kanal seçin.</p>
-            </div>
-        </div>
-        
-        <!-- Xtream Codes Giriş Formu -->
-        <div id="xtreamLoginSection" class="bg-gray-800 p-4 rounded-xl shadow-2xl space-y-3">
-            <h3 class="text-lg font-semibold text-gray-300 flex items-center gap-2 mb-2">
-                <i data-lucide="key" class="w-5 h-5 text-indigo-400"></i> Xtream Codes Girişi
-            </h3>
-
-            <input type="text" id="serverUrl" placeholder="Server URL (örn: http://tv.sunucu.com:80)"
-                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 shadow-sm text-sm text-white placeholder-gray-400">
-            <input type="text" id="username" placeholder="Kullanıcı Adı"
-                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 shadow-sm text-sm text-white placeholder-gray-400">
-            <input type="password" id="password" placeholder="Şifre"
-                   class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 shadow-sm text-sm text-white placeholder-gray-400">
-
-            <button id="loginButton" onclick="loginXtreamCodes()"
-                    class="w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 ease-in-out shadow-lg hover:shadow-xl active:scale-95 flex items-center justify-center gap-2">
-                <i data-lucide="log-in" class="w-5 h-5"></i> Giriş Yap & Verileri Kaydet
-            </button>
-
-            <!-- Dinamik M3U URL Görüntüleme / CORS Yönergesi -->
-            <div id="m3uUrlDisplay" class="hidden space-y-2 p-3 bg-gray-700 rounded-lg border border-gray-600">
-                <p class="text-sm font-semibold text-green-400 flex items-center gap-2">
-                    <i data-lucide="check-circle" class="w-4 h-4"></i> Giriş Bilgileri Kaydedildi!
-                </p>
-                <p class="text-xs text-gray-400">Aşağıdaki URL'den M3U listenizi alabilirsiniz. Tarayıcı kısıtlamaları nedeniyle, M3U içeriğini kendiniz yapıştırın:</p>
-                <div class="flex items-center">
-                    <input type="text" id="generatedM3uUrl" readonly class="flex-grow p-2 text-xs bg-gray-900 text-yellow-300 rounded-l-lg border border-yellow-500">
-                    <button onclick="copyM3uUrl()" class="p-2 bg-yellow-600 text-white text-xs rounded-r-lg hover:bg-yellow-700 active:scale-95">Kopyala</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- M3U İçerik Yapıştırma Formu -->
-        <div class="bg-gray-800 p-4 rounded-xl shadow-2xl space-y-3">
-            <h3 class="text-lg font-semibold text-gray-300 flex items-center gap-2">
-                <i data-lucide="clipboard" class="w-5 h-5 text-indigo-400"></i> M3U İçeriği Yapıştır
-            </h3>
-            <textarea id="m3uInput" rows="4" placeholder="Kopyaladığınız M3U dosyasının içeriğini buraya yapıştırın."
-                      class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 shadow-sm text-sm text-white placeholder-gray-400"></textarea>
-            <button id="parseButton" onclick="parseAndSaveM3U()"
-                    class="w-full px-4 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition duration-150 ease-in-out shadow-lg hover:shadow-xl active:scale-95 flex items-center justify-center gap-2">
-                <i data-lucide="list-plus" class="w-5 h-5"></i> M3U Listesini Ayrıştır & Kaydet
-            </button>
-            <div id="statusMessage" class="text-sm p-3 rounded-lg border text-gray-300 bg-gray-700 border-gray-600">
-                Durum: Kanal listesi veritabanından yükleniyor.
-            </div>
-        </div>
-    </div>
-
-    <script type="module">
-        // Firebase modüllerini global alandan çek
-        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, onSnapshot, getDoc, updateDoc, deleteDoc, setLogLevel } = window.firebase;
-
-        // Sabitler
-        const DB_COLLECTION = 'iptv_data';
-        const DB_PLAYLIST_DOC = 'playlist'; 
-        const DB_CREDENTIALS_DOC = 'credentials'; 
-        const DB_FAVORITES_DOC = 'favorites'; 
-        const FIREBASE_LOADING_DIV = document.getElementById('firebaseLoading');
-        
-        // DOM Elemanları
-        const video = document.getElementById('video');
-        const m3uInput = document.getElementById('m3uInput');
-        const channelList = document.getElementById('channelList');
-        const statusMessage = document.getElementById('statusMessage');
-        const channelTitle = document.getElementById('channelTitle');
-        const channelUrl = document.getElementById('channelUrl');
-        const channelCountSpan = document.getElementById('channelCount');
-        const initialMessage = document.getElementById('initialMessage');
-        const searchInput = document.getElementById('searchInput');
-        const categoryBar = document.getElementById('categoryBar'); 
-        
-        // Xtream Codes DOM Elemanları
-        const serverUrlInput = document.getElementById('serverUrl');
-        const usernameInput = document.getElementById('username');
-        const passwordInput = document.getElementById('password');
-        const m3uUrlDisplay = document.getElementById('m3uUrlDisplay');
-        const generatedM3uUrlInput = document.getElementById('generatedM3uUrl');
-
-        // Global Durumlar
-        let channels = [];
-        let filteredChannels = [];
-        let categories = [];
-        let favorites = {}; 
-        let currentCategory = 'Tümü'; 
-        let currentHlsInstance = null;
-        let db = null;
-        let auth = null;
-        let userId = null;
-        let appId = null;
-
-        /**
-         * Başlangıçta Firebase'i ayarlar ve kullanıcıyı doğrular.
-         */
-        async function setupFirebase() {
+        // Kimlik doğrulama işlemi
+        async function authenticateUser() {
             try {
-                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(fb.auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(fb.auth);
+                }
+            } catch (error) {
+                console.error("Firebase Kimlik Doğrulama Hatası:", error);
+            }
+        }
+        
+        authenticateUser();
 
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
+        // Kimlik doğrulama durumu değiştiğinde çalışır
+        onAuthStateChanged(fb.auth, (user) => {
+            if (user) {
+                fb.userId = user.uid;
+                fb.isAuthReady = true;
+                console.log("Kullanıcı Kimliği:", fb.userId);
+                document.getElementById('user-id-display').textContent = fb.userId;
                 
-                setLogLevel('error');
-
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
+                // Auth hazır olduğunda verileri yükle
+                if (window.loadInitialData) {
+                    window.loadInitialData();
                 }
-
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        console.log("Firebase Auth Hazır. Kullanıcı ID:", userId);
-                        FIREBASE_LOADING_DIV.style.display = 'none';
-                        loadM3UListener(); 
-                        loadCredentials(); 
-                        loadFavoritesListener(); 
-                    } else {
-                        updateStatus('Veritabanına bağlanılamadı. Lütfen tekrar deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                    }
-                });
-
-            } catch (error) {
-                console.error("Firebase Kurulum Hatası:", error);
-                FIREBASE_LOADING_DIV.style.display = 'none';
-                updateStatus('Firebase bağlantısı kurulamadı. Konsolu kontrol edin.', 'border-red-500 text-red-400 bg-gray-900');
-            }
-        }
-        
-        // --- Xtream Codes ve M3U Fonksiyonları ---
-        
-        async function loadCredentials() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_CREDENTIALS_DOC}`);
-            
-            try {
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    serverUrlInput.value = data.serverUrl || '';
-                    usernameInput.value = data.username || '';
-                    passwordInput.value = data.password || '';
-                    
-                    if (data.serverUrl && data.username && data.password) {
-                        displayM3uUrl(data.serverUrl, data.username, data.password);
-                    }
-                }
-            } catch (error) {
-                console.error("Giriş Bilgilerini Yükleme Hatası:", error);
-            }
-        }
-        
-        function displayM3uUrl(serverUrl, username, password) {
-            if (serverUrl.endsWith('/')) {
-                serverUrl = serverUrl.slice(0, -1);
-            }
-            const m3uUrl = `${serverUrl}/get.php?username=${username}&password=${password}&type=m3u_plus&output=ts`;
-            
-            generatedM3uUrlInput.value = m3uUrl;
-            m3uUrlDisplay.classList.remove('hidden');
-        }
-
-        window.loginXtreamCodes = async function() {
-            const serverUrl = serverUrlInput.value.trim();
-            const username = usernameInput.value.trim();
-            const password = passwordInput.value.trim();
-
-            if (!serverUrl || !username || !password) {
-                updateStatus('Lütfen tüm Xtream Codes alanlarını doldurun.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-            
-            updateStatus('Xtream Codes bilgileri kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_CREDENTIALS_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    serverUrl: serverUrl,
-                    username: username,
-                    password: password
-                });
-
-                displayM3uUrl(serverUrl, username, password);
-                updateStatus('Giriş bilgileri başarıyla kaydedildi. M3U listesini yapıştırın.', 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("Giriş Bilgilerini Kaydetme Hatası:", error);
-                updateStatus('Giriş bilgileri kaydedilirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.parseAndSaveM3U = async function() {
-            const content = m3uInput.value.trim();
-            if (!content) {
-                updateStatus('Lütfen ayrıştırmak için M3U içeriği yapıştırın.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            updateStatus('M3U içeriği ayrıştırılıyor ve kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-            
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    m3uContent: content,
-                    lastUpdated: new Date().toISOString()
-                });
-                updateStatus(`M3U içeriği başarıyla kaydedildi!`, 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("M3U Kaydetme Hatası:", error);
-                if (error.code === 'resource-exhausted') {
-                    updateStatus('Hata: M3U listeniz çok büyük (1MB sınırı). Daha kısa bir liste deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                } else {
-                    updateStatus('Veri kaydederken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-                }
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.parseAndSaveM3U = async function() {
-            const content = m3uInput.value.trim();
-            if (!content) {
-                updateStatus('Lütfen ayrıştırmak için M3U içeriği yapıştırın.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            updateStatus('M3U içeriği ayrıştırılıyor ve kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-            
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    m3uContent: content,
-                    lastUpdated: new Date().toISOString()
-                });
-                updateStatus(`M3U içeriği başarıyla kaydedildi!`, 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("M3U Kaydetme Hatası:", error);
-                if (error.code === 'resource-exhausted') {
-                    updateStatus('Hata: M3U listeniz çok büyük (1MB sınırı). Daha kısa bir liste deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                } else {
-                    updateStatus('Veri kaydederken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-                }
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.parseAndSaveM3U = async function() {
-            const content = m3uInput.value.trim();
-            if (!content) {
-                updateStatus('Lütfen ayrıştırmak için M3U içeriği yapıştırın.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            updateStatus('M3U içeriği ayrıştırılıyor ve kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-            
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    m3uContent: content,
-                    lastUpdated: new Date().toISOString()
-                });
-                updateStatus(`M3U içeriği başarıyla kaydedildi!`, 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("M3U Kaydetme Hatası:", error);
-                if (error.code === 'resource-exhausted') {
-                    updateStatus('Hata: M3U listeniz çok büyük (1MB sınırı). Daha kısa bir liste deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                } else {
-                    updateStatus('Veri kaydederken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-                }
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.parseAndSaveM3U = async function() {
-            const content = m3uInput.value.trim();
-            if (!content) {
-                updateStatus('Lütfen ayrıştırmak için M3U içeriği yapıştırın.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            updateStatus('M3U içeriği ayrıştırılıyor ve kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-            
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    m3uContent: content,
-                    lastUpdated: new Date().toISOString()
-                });
-                updateStatus(`M3U içeriği başarıyla kaydedildi!`, 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("M3U Kaydetme Hatası:", error);
-                if (error.code === 'resource-exhausted') {
-                    updateStatus('Hata: M3U listeniz çok büyük (1MB sınırı). Daha kısa bir liste deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                } else {
-                    updateStatus('Veri kaydederken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-                }
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.parseAndSaveM3U = async function() {
-            const content = m3uInput.value.trim();
-            if (!content) {
-                updateStatus('Lütfen ayrıştırmak için M3U içeriği yapıştırın.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            updateStatus('M3U içeriği ayrıştırılıyor ve kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-            
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    m3uContent: content,
-                    lastUpdated: new Date().toISOString()
-                });
-                updateStatus(`M3U içeriği başarıyla kaydedildi!`, 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("M3U Kaydetme Hatası:", error);
-                if (error.code === 'resource-exhausted') {
-                    updateStatus('Hata: M3U listeniz çok büyük (1MB sınırı). Daha kısa bir liste deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                } else {
-                    updateStatus('Veri kaydederken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-                }
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.parseAndSaveM3U = async function() {
-            const content = m3uInput.value.trim();
-            if (!content) {
-                updateStatus('Lütfen ayrıştırmak için M3U içeriği yapıştırın.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            updateStatus('M3U içeriği ayrıştırılıyor ve kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-            
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    m3uContent: content,
-                    lastUpdated: new Date().toISOString()
-                });
-                updateStatus(`M3U içeriği başarıyla kaydedildi!`, 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("M3U Kaydetme Hatası:", error);
-                if (error.code === 'resource-exhausted') {
-                    updateStatus('Hata: M3U listeniz çok büyük (1MB sınırı). Daha kısa bir liste deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                } else {
-                    updateStatus('Veri kaydederken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-                }
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.parseAndSaveM3U = async function() {
-            const content = m3uInput.value.trim();
-            if (!content) {
-                updateStatus('Lütfen ayrıştırmak için M3U içeriği yapıştırın.', 'border-red-500 text-red-400 bg-gray-900');
-                return;
-            }
-
-            if (!db || !userId) {
-                updateStatus('Veritabanı bağlantısı henüz hazır değil. Lütfen bekleyin.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            updateStatus('M3U içeriği ayrıştırılıyor ve kaydediliyor...', 'border-blue-500 text-blue-400 bg-gray-700');
-            
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            try {
-                await setDoc(docRef, {
-                    m3uContent: content,
-                    lastUpdated: new Date().toISOString()
-                });
-                updateStatus(`M3U içeriği başarıyla kaydedildi!`, 'border-green-500 text-green-400 bg-gray-700');
-
-            } catch (error) {
-                console.error("M3U Kaydetme Hatası:", error);
-                if (error.code === 'resource-exhausted') {
-                    updateStatus('Hata: M3U listeniz çok büyük (1MB sınırı). Daha kısa bir liste deneyin.', 'border-red-500 text-red-400 bg-gray-900');
-                } else {
-                    updateStatus('Veri kaydederken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-                }
-            }
-        }
-        
-        window.copyM3uUrl = function() {
-            const copyText = generatedM3uUrlInput;
-            copyText.select();
-            document.execCommand('copy');
-        }
-
-        function loadM3UListener() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_PLAYLIST_DOC}`);
-            
-            updateStatus('Kişisel M3U veriniz yükleniyor...', 'border-indigo-500 text-indigo-400 bg-gray-700');
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().m3uContent) {
-                    const content = docSnap.data().m3uContent;
-                    m3uInput.value = content;
-                    parseM3U(content);
-                    updateStatus(`M3U listeniz (${channels.length} kanal) veritabanından yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                } else {
-                    updateStatus('Veritabanında kayıtlı M3U listesi bulunamadı. Lütfen M3U içeriği yapıştırın.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    initialMessage.style.display = 'block';
-                }
-            }, (error) => {
-                console.error("Firestore Dinleme Hatası:", error);
-                updateStatus('Veri dinlenirken hata oluştu: ' + error.message, 'border-red-500 text-red-400 bg-gray-900');
-            });
-        }
-
-        function parseM3U(content) {
-            channels = [];
-            categories = ['Tümü', 'Favoriler']; 
-            
-            const lines = content.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-            
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].startsWith('#EXTINF:')) {
-                    const infoLine = lines[i];
-                    let channelName = 'Bilinmeyen Kanal';
-                    let category = 'Diğer'; 
-
-                    const nameMatch = infoLine.match(/,(.*)$/);
-                    if (nameMatch && nameMatch[1]) {
-                        channelName = nameMatch[1].trim();
-                    }
-
-                    const groupMatch = infoLine.match(/group-title="([^"]*)"/);
-                    if (groupMatch && groupMatch[1]) {
-                        category = groupMatch[1].trim() || 'Diğer';
-                    }
-                    if (category !== 'Diğer' && !categories.includes(category)) {
-                        categories.push(category);
-                    }
-                    
-                    let logoUrl = '';
-                    const logoMatch = infoLine.match(/tvg-logo="([^"]*)"/);
-                    if (logoMatch && logoMatch[1]) {
-                        logoUrl = logoMatch[1];
-                    }
-
-                    if (i + 1 < lines.length) {
-                        const streamUrl = lines[i + 1];
-                        if (streamUrl.startsWith('http')) {
-                            channels.push({
-                                name: channelName,
-                                url: streamUrl,
-                                logo: logoUrl,
-                                category: category 
-                            });
-                        }
-                    }
-                }
-            }
-            
-            filterByGroup(currentCategory); 
-            renderCategories(); 
-        }
-
-        window.loadFavoritesListener = function() {
-            if (!db || !userId) return;
-
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_FAVORITES_DOC}`);
-            
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists() && docSnap.data().list) {
-                    favorites = docSnap.data().list.reduce((acc, channelName) => {
-                        acc[channelName] = true;
-                        return acc;
-                    }, {});
-                } else {
-                    favorites = {};
-                }
-                filterChannels();
-                renderCategories();
-            }, (error) => {
-                console.error("Favori Listesi Dinleme Hatası:", error);
-            });
-        }
-        
-        window.toggleFavorite = async function(channelName) {
-            if (!db || !userId) {
-                updateStatus('Favori eklemek için veritabanı bağlantısı bekleniyor.', 'border-yellow-500 text-yellow-400 bg-gray-700');
-                return;
-            }
-
-            const isCurrentlyFavorite = favorites[channelName];
-            const docRef = doc(db, `artifacts/${appId}/users/${userId}/${DB_COLLECTION}/${DB_FAVORITES_DOC}`);
-            
-            let currentList = Object.keys(favorites);
-            
-            if (isCurrentlyFavorite) {
-                currentList = currentList.filter(name => name !== channelName);
             } else {
-                currentList.push(channelName);
+                // Anonim oturum açılmamışsa, rastgele ID kullan (Firestore kuralları için anonim oturum açılmalı)
+                fb.userId = 'unauthenticated_' + crypto.randomUUID();
+                fb.isAuthReady = true;
+                console.log("Anonim Kimlik Oluşturuldu (Auth bekleniyor):", fb.userId);
             }
+        });
 
-            try {
-                await setDoc(docRef, { list: currentList }, { merge: true });
-                updateStatus(`'${channelName}' ${isCurrentlyFavorite ? 'favorilerden çıkarıldı.' : 'favorilere eklendi.'}`, 'border-indigo-500 text-indigo-400 bg-gray-700');
-            } catch (error) {
-                console.error("Favori Güncelleme Hatası:", error);
-                updateStatus('Favori güncellenirken hata oluştu.', 'border-red-500 text-red-400 bg-gray-900');
+        // Global fonksiyonlar
+        window.getChannelDataRef = () => doc(fb.db, "artifacts", fb.appId, "users", fb.userId, "iptv_data", "channels");
+        window.getFavoritesRef = () => doc(fb.db, "artifacts", fb.appId, "users", fb.userId, "iptv_data", "favorites");
+        window.getCodesRef = () => doc(fb.db, "artifacts", fb.appId, "users", fb.userId, "iptv_data", "xtream_codes");
+
+    </script>
+
+    <style>
+        /* Genel Arka Plan ve Font */
+        body { font-family: 'Inter', sans-serif; background-color: #0d1117; color: #e6e6e6; }
+        
+        /* Flexbox düzeni: Kanal listesi ve video oynatıcı yan yana */
+        .container-layout {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sol Panel (Liste) */
+        .list-panel {
+            width: 320px; /* Sabit genişlik */
+            min-width: 320px;
+            background-color: #161b22;
+            overflow-y: auto;
+            border-right: 1px solid #30363d;
+            padding: 1rem;
+            flex-shrink: 0;
+        }
+
+        /* Sağ Panel (Oynatıcı) */
+        .player-panel {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #0d1117;
+            padding: 1rem;
+        }
+
+        /* Kanal Listesi Öğeleri */
+        .channel-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            background-color: #21262d;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+            font-size: 0.9rem;
+        }
+        .channel-item:hover {
+            background-color: #30363d;
+            transform: translateY(-1px);
+        }
+        .channel-item.active {
+            background-color: #4a5568; 
+            box-shadow: 0 0 10px rgba(79, 70, 229, 0.5);
+        }
+
+        /* Kategoriler */
+        .category-button {
+            padding: 0.5rem 1rem;
+            border-radius: 9999px; /* Full rounded */
+            margin-right: 0.5rem;
+            margin-bottom: 0.5rem;
+            background-color: #30363d;
+            color: #c9d1d9;
+            transition: background-color 0.2s, color 0.2s;
+            white-space: nowrap;
+            font-size: 0.875rem;
+        }
+        .category-button:hover {
+            background-color: #4a5568;
+        }
+        .category-button.active {
+            background-color: #4f46e5; /* Indigo */
+            color: white;
+            font-weight: 600;
+        }
+
+        /* Video Oynatıcı */
+        .video-container {
+            width: 100%;
+            padding-top: 56.25%; /* 16:9 Aspect Ratio */
+            position: relative;
+            margin-bottom: 1rem;
+            background-color: #000;
+            border-radius: 0.75rem;
+            overflow: hidden;
+        }
+        .video-container video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        /* Mobil Uyum */
+        @media (max-width: 768px) {
+            .container-layout {
+                flex-direction: column;
+            }
+            .list-panel {
+                width: 100%;
+                height: 40vh; /* Mobil cihazlarda listenin bir kısmı görünür */
+                min-height: 250px;
+                border-right: none;
+                border-bottom: 1px solid #30363d;
+                order: 2; /* Listenin alta gelmesi */
+            }
+            .player-panel {
+                order: 1; /* Oynatıcının üste gelmesi */
+                height: 60vh;
+                padding-bottom: 0;
+            }
+            .video-container {
+                flex-grow: 1;
+                padding-top: 0;
+                height: 100%;
+            }
+            .video-container video {
+                 object-fit: contain; /* Video'yu sığdır */
             }
         }
-        
-        // --- Arayüz ve Oynatıcı Fonksiyonları ---
+    </style>
+</head>
 
-        function renderCategories() {
-            categoryBar.innerHTML = ''; 
+<body>
+    <div id="app" class="container-layout">
 
-            categories.forEach(category => {
-                const isActive = category === currentCategory;
-                const button = document.createElement('button');
-                button.textContent = category;
-                button.className = `px-3 py-1 text-sm font-medium rounded-full transition duration-150 whitespace-nowrap ${
-                    isActive 
-                        ? 'bg-indigo-600 text-white shadow-lg font-bold' 
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
-                }`;
-                button.onclick = () => filterByGroup(category);
-                categoryBar.appendChild(button);
+        <!-- Sol Panel: Kanal Listesi ve Ayarlar -->
+        <div class="list-panel">
+            
+            <!-- Logo ve Başlık -->
+            <h3 class="text-2xl font-bold text-indigo-400 mb-4 flex items-center gap-2">
+                <!-- Logoyu kendi URL'nizle değiştirin! -->
+                <img src="https://placehold.co/40x40/4f46e5/ffffff?text=LOGO" 
+                    onerror="this.onerror=null;this.src='https://placehold.co/40x40/4f46e5/ffffff?text=LOGO';"
+                    alt="Kişisel Logo" class="w-10 h-10 object-contain rounded-lg">
+                
+                <span class="text-white">Player Adı</span>
+            </h3>
+            
+            <!-- Kullanıcı Kimliği -->
+            <p class="text-xs text-gray-500 mb-4">
+                Kullanıcı ID: <span id="user-id-display" class="font-mono text-indigo-300">Yükleniyor...</span>
+            </p>
+
+            <!-- Arama Çubuğu -->
+            <input type="text" id="search-input" placeholder="Kanal Ara..." 
+                   class="w-full p-2 mb-4 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-500 focus:ring-opacity-50"
+                   oninput="filterChannels()">
+
+            <!-- Kategori Butonları -->
+            <div id="category-filter" class="flex flex-wrap mb-4 overflow-x-auto pb-1">
+                <!-- Kategori Butonları buraya yüklenecek -->
+            </div>
+
+            <!-- Xtream Codes Giriş Alanı -->
+            <div id="xtream-codes-form" class="bg-gray-800 p-4 rounded-lg mb-4">
+                <h4 class="text-lg font-semibold mb-2 text-indigo-400">Xtream Codes Girişi</h4>
+                <input type="url" id="server-url" placeholder="Server URL (http://domain:port)" class="w-full p-2 mb-2 bg-gray-700 text-white rounded-lg border border-gray-600">
+                <input type="text" id="username-input" placeholder="Kullanıcı Adı" class="w-full p-2 mb-2 bg-gray-700 text-white rounded-lg border border-gray-600">
+                <input type="password" id="password-input" placeholder="Şifre" class="w-full p-2 mb-2 bg-gray-700 text-white rounded-lg border border-gray-600">
+                <button onclick="saveXtreamCodes()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition duration-200">
+                    Giriş Yap & Verileri Kaydet
+                </button>
+                <div id="m3u-url-output" class="mt-2 text-sm text-green-400 hidden"></div>
+            </div>
+
+            <!-- M3U İçerik Alanı -->
+            <div class="bg-gray-800 p-4 rounded-lg mb-4">
+                <h4 class="text-lg font-semibold mb-2 text-indigo-400">M3U İçeriği Yapıştır</h4>
+                <textarea id="m3u-input" rows="5" placeholder="Tüm M3U dosyasının içeriğini buraya yapıştırın..." 
+                          class="w-full p-2 mb-2 bg-gray-700 text-white rounded-lg border border-gray-600"></textarea>
+                <button onclick="parseAndSaveM3U()" class="w-full py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition duration-200">
+                    M3U Listesini Ayrıştır & Kaydet
+                </button>
+            </div>
+            
+            <!-- Kanal Listesi -->
+            <div id="channel-list" class="mt-4">
+                <p id="loading-message" class="text-sm text-center text-gray-500">Kanal listesi bekleniyor...</p>
+                <!-- Kanal Öğeleri buraya yüklenecek -->
+            </div>
+        </div>
+
+        <!-- Sağ Panel: Video Oynatıcı -->
+        <div class="player-panel">
+            <h1 id="current-channel-title" class="text-xl font-semibold mb-3 text-white">Lütfen bir kanal seçin.</h1>
+            
+            <!-- Video Oynatıcı -->
+            <div class="video-container shadow-2xl">
+                <video id="video-player" controls autoplay playsinline class="w-full h-full"></video>
+            </div>
+
+            <!-- Mesaj Kutusu -->
+            <div id="message-box" class="bg-yellow-800 text-yellow-200 p-3 rounded-lg hidden"></div>
+        </div>
+
+    </div>
+
+    <script>
+        // Global State
+        let allChannels = [];
+        let filteredChannels = [];
+        let currentCategory = 'TÜMÜ';
+        let currentFavorites = new Set();
+        let currentVideoElement = null;
+        let hlsInstance = null;
+        let activeChannelId = null;
+
+        // PWA Manifest'i dinamik olarak oluşturma (PWABuilder için)
+        // PWABuilder, linkteki /manifest.json dosyasını çekmeye çalışır.
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').then(reg => {
+                console.log('SW registered!', reg);
+            }).catch(err => {
+                console.log('SW registration failed:', err);
+            });
+
+            // Dinamik manifest içeriği
+            window.addEventListener('fetch', event => {
+                if (event.request.url.endsWith('/manifest.json')) {
+                    event.respondWith(new Response(JSON.stringify({
+                        "name": "Kişisel IPTV Player",
+                        "short_name": "IPTV Player",
+                        "description": "Özel IPTV Oynatıcınız",
+                        "start_url": "./index.html",
+                        "display": "standalone",
+                        "background_color": "#111827",
+                        "theme_color": "#4f46e5",
+                        "icons": [
+                            {"src": "https://placehold.co/192x192/4f46e5/ffffff?text=IP", "sizes": "192x192", "type": "image/png"},
+                            {"src": "https://placehold.co/512x512/4f46e5/ffffff?text=IP", "sizes": "512x512", "type": "image/png"}
+                        ],
+                        "orientation": "portrait"
+                    }), {
+                        headers: { 'Content-Type': 'application/json' }
+                    }));
+                }
             });
         }
-        
-        window.filterByGroup = function(category) {
-            currentCategory = category;
-            searchInput.value = ''; 
-            
-            renderCategories(); 
-            filterChannels(); 
+
+
+        // Mesaj kutusu gösterimi
+        function showMessage(message, type = 'info') {
+            const box = document.getElementById('message-box');
+            box.textContent = message;
+            box.className = `p-3 rounded-lg mt-4 ${type === 'error' ? 'bg-red-800 text-red-200' : 'bg-yellow-800 text-yellow-200'}`;
+            box.style.display = 'block';
+            setTimeout(() => {
+                box.style.display = 'none';
+            }, 5000);
         }
 
-        window.filterChannels = function() {
-            const searchTerm = searchInput.value.toLowerCase();
+        // HLS Oynatıcıyı Başlatma
+        function initializePlayer(url) {
+            currentVideoElement = document.getElementById('video-player');
             
-            let baseList = channels;
-            
-            if (currentCategory === 'Favoriler') {
-                baseList = channels.filter(channel => favorites[channel.name]);
-            } else if (currentCategory !== 'Tümü') {
-                baseList = channels.filter(channel => channel.category === currentCategory);
+            if (hlsInstance) {
+                hlsInstance.destroy(); // Önceki örneği yok et
             }
 
-            filteredChannels = baseList.filter(channel => 
-                channel.name.toLowerCase().includes(searchTerm)
-            );
-            
-            renderChannelList(filteredChannels);
-        }
-        
-        function renderChannelList(list) {
-            channelList.innerHTML = ''; 
-            channelCountSpan.textContent = list.length;
+            if (Hls.isSupported()) {
+                hlsInstance = new Hls();
+                hlsInstance.loadSource(url);
+                hlsInstance.attachMedia(currentVideoElement);
+                
+                hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        showMessage(`Oynatma hatası: ${data.details}. Lütfen başka bir kanalı deneyin veya M3U URL'sini kontrol edin.`, 'error');
+                        console.error('HLS Fatal Error:', data);
+                    }
+                });
+            } else if (currentVideoElement.canPlayType('application/vnd.apple.mpegurl')) {
+                // Tarayıcı HLS'i yerel olarak destekliyorsa (iOS/Safari)
+                currentVideoElement.src = url;
+            } else {
+                showMessage("Tarayıcınız video akışını oynatmayı desteklemiyor.", 'error');
+            }
 
-            if (list.length === 0) {
-                channelList.innerHTML = `<div class="text-center p-6 text-gray-500 text-sm">Bu kategoride veya arama kriterinde kanal bulunamadı.</div>`;
+            currentVideoElement.play().catch(error => {
+                 showMessage("Oynatma otomatik olarak başlatılamadı. Lütfen oynatıcıya tıklayın.", 'info');
+            });
+        }
+
+        // Kanalı Oynatma
+        window.playChannel = (channelId) => {
+            const channel = allChannels.find(c => c.id === channelId);
+            if (!channel || !channel.url) {
+                showMessage("Seçilen kanalın URL'si bulunamadı.", 'error');
                 return;
             }
 
-            list.forEach((channel) => {
-                const isFavorite = favorites[channel.name] || false;
-                
-                const channelDiv = document.createElement('div');
-                channelDiv.className = 'w-full flex items-center justify-between p-3 bg-gray-700 hover:bg-indigo-600 rounded-lg transition duration-150 shadow-md group';
-                
-                const playButton = document.createElement('button');
-                playButton.className = 'flex items-center flex-grow min-w-0 text-left';
-                playButton.onclick = () => loadStream(channel.url, channel.name);
-                
-                let logoHtml = '';
-                if (channel.logo && channel.logo.startsWith('http')) {
-                    logoHtml = `<img src="${channel.logo}" onerror="this.onerror=null;this.src='https://placehold.co/40x40/4f46e5/ffffff?text=TV';" 
-                                  alt="${channel.name} Logosu" class="w-10 h-10 object-contain rounded-full bg-gray-900 flex-shrink-0 mr-3">`;
-                } else {
-                    logoHtml = `<div class="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white flex-shrink-0 mr-3">
-                                <i data-lucide="zap" class="w-5 h-5"></i>
-                            </div>`;
-                }
+            // Aktif kanalı işaretle
+            document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
+            document.getElementById(`channel-${channelId}`).classList.add('active');
+            activeChannelId = channelId;
 
-                playButton.innerHTML = `
-                    ${logoHtml}
-                    <div class="flex-grow min-w-0">
-                        <p class="font-semibold text-white truncate group-hover:text-yellow-300">${channel.name}</p>
-                        <p class="text-xs text-gray-400 truncate">${channel.url.substring(0, 40)}...</p>
+            document.getElementById('current-channel-title').textContent = channel.name;
+            initializePlayer(channel.url);
+        }
+
+        // Favorileri Firestore'dan yükle
+        async function loadFavorites() {
+            if (!fb.isAuthReady) return;
+
+            const favoritesDocRef = window.getFavoritesRef();
+            const docSnap = await getDoc(favoritesDocRef);
+
+            if (docSnap.exists() && docSnap.data().list) {
+                currentFavorites = new Set(docSnap.data().list);
+            } else {
+                currentFavorites = new Set();
+            }
+
+            // Favori durumunu güncelle
+            renderChannelList();
+        }
+
+        // Favori durumunu değiştirme ve kaydetme
+        window.toggleFavorite = async (channelId, event) => {
+            event.stopPropagation(); // Kanalın oynatılmasını engelle
+
+            const channel = allChannels.find(c => c.id === channelId);
+            if (!channel) return;
+
+            const isFavorite = currentFavorites.has(channel.name);
+
+            if (isFavorite) {
+                currentFavorites.delete(channel.name);
+                showMessage(`${channel.name} favorilerden çıkarıldı.`);
+            } else {
+                currentFavorites.add(channel.name);
+                showMessage(`${channel.name} favorilere eklendi.`);
+            }
+
+            // Firestore'a kaydet
+            const favoritesDocRef = window.getFavoritesRef();
+            try {
+                 await setDoc(favoritesDocRef, { list: Array.from(currentFavorites) }, { merge: true });
+            } catch (e) {
+                showMessage("Favoriler kaydedilirken hata oluştu: " + e.message, 'error');
+            }
+
+            // Listeyi yeniden render et
+            renderChannelList();
+            
+            // Eğer aktif kategori favoriler ise, listeyi filtrele
+            if (currentCategory === 'FAVORİLER') {
+                 filterChannels();
+            }
+        };
+
+        // M3U içeriğini ayrıştırma
+        function parseM3U(m3uContent) {
+            const lines = m3uContent.split('\n');
+            let channels = [];
+            let currentChannel = null;
+            let counter = 1;
+
+            for (const line of lines) {
+                if (line.startsWith('#EXTINF:')) {
+                    // Yeni kanal bilgisi
+                    currentChannel = {};
+                    currentChannel.id = 'ch_' + counter++;
+                    currentChannel.name = (line.match(/,(.+)/) || [null, 'Bilinmeyen Kanal'])[1].trim();
+
+                    // Grup Başlığını al
+                    const groupMatch = line.match(/group-title="([^"]+)"/i);
+                    currentChannel.group = groupMatch ? groupMatch[1].trim() : 'Diğer';
+
+                } else if (currentChannel && line.startsWith('http')) {
+                    // Akış URL'si
+                    currentChannel.url = line.trim();
+                    channels.push(currentChannel);
+                    currentChannel = null;
+                }
+            }
+            return channels;
+        }
+
+        // M3U'yu ayrıştır ve Firestore'a kaydet
+        window.parseAndSaveM3U = async () => {
+            if (!fb.isAuthReady) {
+                showMessage("Kullanıcı kimliği yükleniyor, lütfen bekleyin.", 'info');
+                return;
+            }
+
+            const m3uContent = document.getElementById('m3u-input').value.trim();
+            if (!m3uContent) {
+                showMessage("Lütfen M3U içeriğini yapıştırın.", 'error');
+                return;
+            }
+
+            const parsedChannels = parseM3U(m3uContent);
+            if (parsedChannels.length === 0) {
+                showMessage("Geçerli kanal bulunamadı. Yapıştırdığınız M3U formatı doğru mu?", 'error');
+                return;
+            }
+
+            try {
+                // Kanal verilerini Firestore'a kaydet (JSON stringify ile)
+                await setDoc(window.getChannelDataRef(), {
+                    timestamp: new Date(),
+                    data: JSON.stringify(parsedChannels)
+                });
+
+                showMessage(`${parsedChannels.length} kanal başarıyla ayrıştırıldı ve kaydedildi!`);
+                document.getElementById('m3u-input').value = ''; // Kutuyu temizle
+                
+                // Kayıt sonrası veriyi tekrar yükle
+                await loadInitialData(); 
+            } catch (e) {
+                showMessage("M3U verisi kaydedilirken hata oluştu: " + e.message, 'error');
+                console.error("Firestore Kayıt Hatası:", e);
+            }
+        }
+
+        // Xtream Codes'u kaydetme
+        window.saveXtreamCodes = async () => {
+             if (!fb.isAuthReady) {
+                showMessage("Kullanıcı kimliği yükleniyor, lütfen bekleyin.", 'info');
+                return;
+            }
+            const url = document.getElementById('server-url').value.trim();
+            const user = document.getElementById('username-input').value.trim();
+            const pass = document.getElementById('password-input').value.trim();
+
+            if (!url || !user || !pass) {
+                showMessage("Lütfen tüm Xtream Codes alanlarını doldurun.", 'error');
+                return;
+            }
+
+            try {
+                await setDoc(window.getCodesRef(), { url, user, pass });
+                showMessage("Xtream Codes bilgileri başarıyla kaydedildi!");
+
+                // M3U URL'sini göster
+                const m3uUrl = `${url}/get.php?username=${user}&password=${pass}&type=m3u_plus&output=ts`;
+                const outputDiv = document.getElementById('m3u-url-output');
+                outputDiv.innerHTML = `M3U URL'niz: <a href="${m3uUrl}" target="_blank" class="font-bold underline">${m3uUrl}</a> <br> Lütfen bu URL'yi tarayıcınızda açıp içeriği kopyalayıp aşağıdaki kutuya yapıştırın.`;
+                outputDiv.classList.remove('hidden');
+
+            } catch (e) {
+                showMessage("Xtream Codes kaydedilirken hata oluştu: " + e.message, 'error');
+            }
+        }
+
+        // Xtream Codes'u yükleme
+        function loadXtreamCodes() {
+            onSnapshot(window.getCodesRef(), (docSnapshot) => {
+                if (docSnapshot.exists()) {
+                    const data = docSnapshot.data();
+                    document.getElementById('server-url').value = data.url || '';
+                    document.getElementById('username-input').value = data.user || '';
+                    document.getElementById('password-input').value = data.pass || '';
+                    
+                    if (data.url && data.user && data.pass) {
+                        const m3uUrl = `${data.url}/get.php?username=${data.user}&password=${data.pass}&type=m3u_plus&output=ts`;
+                        const outputDiv = document.getElementById('m3u-url-output');
+                        outputDiv.innerHTML = `M3U URL'niz: <a href="${m3uUrl}" target="_blank" class="font-bold underline">${m3uUrl}</a> <br> Bu URL'den içeriği alıp M3U alanına yapıştırın.`;
+                        outputDiv.classList.remove('hidden');
+                    }
+                }
+            });
+        }
+
+
+        // Kategori filtreleme
+        window.setCategory = (category) => {
+            currentCategory = category;
+            filterChannels();
+            
+            // Buton aktifliğini güncelle
+            document.querySelectorAll('#category-filter button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`cat-btn-${category.replace(/\s/g, '-')}`).classList.add('active');
+        }
+
+        // Kanal listesini filtreleme ve arama
+        window.filterChannels = () => {
+            const searchText = document.getElementById('search-input').value.toLowerCase();
+            
+            // 1. Kategoriye göre filtrele
+            let tempChannels;
+            if (currentCategory === 'TÜMÜ') {
+                tempChannels = allChannels;
+            } else if (currentCategory === 'FAVORİLER') {
+                tempChannels = allChannels.filter(c => currentFavorites.has(c.name));
+            } else {
+                tempChannels = allChannels.filter(c => c.group === currentCategory);
+            }
+
+            // 2. Arama metnine göre filtrele
+            filteredChannels = tempChannels.filter(channel => 
+                channel.name.toLowerCase().includes(searchText)
+            );
+
+            renderChannelList();
+        }
+
+        // Kanal Listesini HTML'e dökme
+        function renderChannelList() {
+            const listElement = document.getElementById('channel-list');
+            listElement.innerHTML = '';
+            
+            if (filteredChannels.length === 0) {
+                listElement.innerHTML = `<p class="text-sm text-center text-gray-500">Bu kategoride/aramada kanal bulunamadı.</p>`;
+                return;
+            }
+
+            filteredChannels.forEach(channel => {
+                const isFavorite = currentFavorites.has(channel.name);
+                const isActive = channel.id === activeChannelId ? 'active' : '';
+                const starColor = isFavorite ? 'fill-yellow-400 text-yellow-400' : 'text-gray-400';
+
+                const html = `
+                    <div id="channel-${channel.id}" class="channel-item ${isActive}" onclick="playChannel('${channel.id}')">
+                        <span class="truncate pr-2">${channel.name}</span>
+                        <button onclick="toggleFavorite('${channel.id}', event)" class="focus:outline-none">
+                            <i data-lucide="star" class="w-5 h-5 ${starColor}"></i>
+                        </button>
                     </div>
                 `;
-                channelDiv.appendChild(playButton);
-                
-                const favoriteButton = document.createElement('button');
-                favoriteButton.className = 'flex-shrink-0 p-2 ml-2 rounded-full transition duration-150 hover:bg-gray-600 active:scale-90';
-                favoriteButton.onclick = (e) => {
-                    e.stopPropagation(); 
-                    toggleFavorite(channel.name);
-                };
-                
-                const starIcon = isFavorite 
-                    ? `<i data-lucide="star" class="w-5 h-5 fill-yellow-400 text-yellow-400"></i>`
-                    : `<i data-lucide="star" class="w-5 h-5 text-gray-400 group-hover:text-yellow-300"></i>`;
-                    
-                favoriteButton.innerHTML = starIcon;
-                channelDiv.appendChild(favoriteButton);
-                
-                channelList.appendChild(channelDiv);
-                
-                lucide.createIcons();
+                listElement.innerHTML += html;
             });
-            initialMessage.style.display = 'none';
-        }
-
-        // --- Oynatıcı Fonksiyonları ---
-
-        window.loadStream = function(url, name) {
-            if (!url) return;
-
-            channelTitle.textContent = name;
-            channelUrl.textContent = url;
             
-            updateStatus(`'${name}' akışı yükleniyor...`, 'border-blue-500 text-blue-400 bg-gray-700');
-
-            if (currentHlsInstance) {
-                currentHlsInstance.destroy();
-            }
-
-            video.src = '';
-            
-            if (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegurl')) {
-                video.src = url;
-                video.addEventListener('loadedmetadata', () => {
-                    video.play().catch(e => console.error("Oynatma hatası (Yerel):", e));
-                    updateStatus(`'${name}' akışı yerel oynatıcıda yüklendi.`, 'border-green-500 text-green-400 bg-gray-700');
-                }, { once: true });
-                video.addEventListener('error', () => {
-                    updateStatus(`Yerel oynatıcı akışı yükleyemedi. HLS.js ile deneniyor.`, 'border-yellow-500 text-yellow-400 bg-gray-700');
-                    loadHls(url, name);
-                }, { once: true });
-            } else if (Hls.isSupported()) {
-                loadHls(url, name);
-            } else {
-                updateStatus('Tarayıcınız akışı oynatamıyor.', 'border-red-500 text-red-400 bg-gray-900');
-            }
-        }
-        
-        function loadHls(url, name) {
-            currentHlsInstance = new Hls();
-            
-            currentHlsInstance.on(Hls.Events.MEDIA_ATTACHED, function () {
-                currentHlsInstance.loadSource(url);
-            });
-
-            currentHlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
-                video.play().catch(e => console.error("Oynatma hatası (HLS.js):", e));
-                updateStatus(`'${name}' akışı hls.js ile yüklendi. Oynatma başladı.`, 'border-green-500 text-green-400 bg-gray-700');
-            });
-
-            currentHlsInstance.on(Hls.Events.ERROR, function (event, data) {
-                let errorMsg = `HLS Hatası: ${data.details}. Lütfen URL'yi kontrol edin.`;
-                console.error("HLS Hata Detayı:", data);
-                updateStatus(errorMsg, 'border-red-500 text-red-400 bg-gray-900');
-            });
-
-            currentHlsInstance.attachMedia(video);
-        }
-        
-        function updateStatus(message, classes) {
-            statusMessage.textContent = message;
-            statusMessage.className = 'text-sm p-3 rounded-lg border ' + classes;
-        }
-
-        window.onload = function() {
-            setupFirebase();
+            // Lucide ikonlarını tekrar render et
             lucide.createIcons();
         }
+
+        // Kategori Butonlarını HTML'e dökme
+        function renderCategoryButtons() {
+            const categoryElement = document.getElementById('category-filter');
+            categoryElement.innerHTML = '';
+            
+            const groups = allChannels.map(c => c.group);
+            const uniqueGroups = ['TÜMÜ', 'FAVORİLER', ...new Set(groups)].filter(Boolean); // Tekrarsız ve boş olmayanlar
+
+            uniqueGroups.forEach(group => {
+                const isActive = group === currentCategory ? 'active' : '';
+                const buttonId = `cat-btn-${group.replace(/\s/g, '-')}`;
+                categoryElement.innerHTML += `
+                    <button id="${buttonId}" onclick="setCategory('${group}')" class="category-button ${isActive}">
+                        ${group}
+                    </button>
+                `;
+            });
+        }
+
+        // İlk Veri Yükleme (Firestore'dan)
+        window.loadInitialData = async () => {
+            if (!fb.isAuthReady) return;
+
+            document.getElementById('loading-message').style.display = 'block';
+
+            // 1. Xtream Codes'u yükle
+            loadXtreamCodes();
+
+            // 2. Favorileri yükle
+            await loadFavorites();
+
+            // 3. Kanal verilerini yükle
+            onSnapshot(window.getChannelDataRef(), (docSnapshot) => {
+                document.getElementById('loading-message').style.display = 'none';
+
+                if (docSnapshot.exists()) {
+                    try {
+                        const data = JSON.parse(docSnapshot.data().data);
+                        allChannels = data;
+                        
+                        renderCategoryButtons();
+                        filterChannels(); 
+                        showMessage(`${allChannels.length} kanal yüklendi. Oynatmaya başlamak için bir kanal seçin.`);
+                    } catch (e) {
+                        showMessage("Kanal verileri yüklenirken ayrıştırma hatası oluştu.", 'error');
+                        console.error("JSON Parse Hatası:", e);
+                    }
+                } else {
+                    allChannels = [];
+                    renderCategoryButtons();
+                    filterChannels();
+                    showMessage("Veritabanında kayıtlı kanal listeniz bulunmuyor. Lütfen M3U içeriğini yapıştırın.");
+                }
+            });
+        }
+
+        // Uygulama yüklendiğinde ve Auth hazır olduğunda verileri yükle
+        window.onload = () => {
+            lucide.createIcons();
+            
+            // Eğer Auth zaten hazırsa (hızlı yükleme)
+            if (fb.isAuthReady) {
+                window.loadInitialData();
+            }
+        };
 
     </script>
 </body>
 </html>
+
