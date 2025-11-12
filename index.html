@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kişiselleştirilmiş IPTV Player</title>
     
-    <!-- KRİTİK: PWABuilder'ın okuması gereken fiziksel manifest dosyasına bağlantı -->
-    <link rel="manifest" href="/manifest.json">
+    <!-- KRİTİK DÜZELTME: Manifest yolunu, dosyanın bulunduğu dizine göre (./) ayarladık. -->
+    <link rel="manifest" href="./manifest.json"> 
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <meta name="apple-mobile-web-app-title" content="IPTVPlayer">
@@ -567,7 +567,7 @@
             filteredChannels.forEach(channel => {
                 const isFavorite = currentFavorites.has(channel.name);
                 const isActive = channel.id === activeChannelId ? 'active' : '';
-                const starColor = isFavorite ? 'fill-yellow-400 text-yellow-400' : 'text-yellow-400';
+                const starColor = isFavorite ? 'fill-yellow-400 text-yellow-400' : 'text-gray-400';
                 const starIconName = isFavorite ? 'star' : 'star';
 
                 const html = `
